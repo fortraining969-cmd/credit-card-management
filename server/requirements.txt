@@ -1,0 +1,6 @@
+Flask
+Flask-Bcrypt
+PyJWT
+python-dotenv
+Flask-PyMongo
+dnspython
