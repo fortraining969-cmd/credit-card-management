@@ -3,6 +3,7 @@ from models.user import User
 from models.order import Order
 from werkzeug.security import generate_password_hash
 from bson import ObjectId
+from services.auth import generate_token, token_required
 
 users_bp = Blueprint('users', __name__)
 
@@ -53,7 +54,7 @@ def get_user(user_id):
 
 @users_bp.route('/', methods=['POST'])
 def create_user():
-    """Create a new user"""
+    """Create a new user (basic)"""
     data = request.get_json()
     
     # Validate required fields
@@ -80,6 +81,87 @@ def create_user():
         
         user.save()
         return jsonify(user.to_dict()), 201
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@users_bp.route('/signup', methods=['POST'])
+def signup():
+    """Signup creating full user profile and returning JWT"""
+    data = request.get_json() or {}
+    required_fields = ['username', 'email', 'password', 'first_name', 'last_name']
+    for field in required_fields:
+        if field not in data or not data[field]:
+            return jsonify({'error': f'{field} is required'}), 400
+    
+    if User.objects(username=data['username']).first():
+        return jsonify({'error': 'Username already exists'}), 400
+    if User.objects(email=data['email']).first():
+        return jsonify({'error': 'Email already exists'}), 400
+    
+    try:
+        user = User.create_user(
+            username=data['username'],
+            email=data['email'],
+            password=data['password'],
+            first_name=data['first_name'],
+            last_name=data['last_name']
+        )
+        # Optional personal
+        user.age = data.get('age')
+        user.gender = data.get('gender')
+        user.nationality = data.get('nationality')
+        user.address = data.get('address')
+        user.phone_number = data.get('ph_number') or data.get('phone_number')
+        user.pan = data.get('PAN') or data.get('pan')
+        user.aadhaar = data.get('aadhaar')
+        slips = data.get('salary_slips')
+        if isinstance(slips, list):
+            user.salary_slips = slips
+        # Employment
+        user.employment_type = data.get('employment_type') or data.get('employment')
+        user.company = data.get('company')
+        user.years_of_experience = data.get('YoE') or data.get('years_of_experience')
+        # Financial
+        user.annual_income = data.get('annual_income')
+        user.bank_account_details = data.get('bank_account_details')
+        user.estimated_existing_loan_amount = data.get('estimated_existing_loan_amount') or data.get('existing_loan_amount')
+        
+        user.save()
+        token = generate_token({'user_id': str(user.id), 'username': user.username})
+        return jsonify({'token': token, 'user': user.to_dict()}), 201
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@users_bp.route('/login', methods=['POST'])
+def login():
+    """Login with username and password, return JWT and user"""
+    data = request.get_json() or {}
+    username = data.get('username')
+    password = data.get('password')
+    if not username or not password:
+        return jsonify({'error': 'username and password are required'}), 400
+    try:
+        user = User.objects(username=username).first()
+        if not user or not user.check_password(password):
+            return jsonify({'error': 'Invalid credentials'}), 401
+        token = generate_token({'user_id': str(user.id), 'username': user.username})
+        return jsonify({'token': token, 'user': user.to_dict()}), 200
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@users_bp.route('/me', methods=['GET'])
+@token_required
+def me():
+    """Return current user profile using JWT"""
+    try:
+        claims = getattr(request, 'user_claims', {})
+        user_id = claims.get('user_id')
+        if not user_id:
+            return jsonify({'error': 'Invalid token'}), 401
+        user = User.objects.get(id=ObjectId(user_id))
+        return jsonify(user.to_dict()), 200
+    except User.DoesNotExist:
+        return jsonify({'error': 'User not found'}), 404
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
@@ -119,6 +201,21 @@ def update_user(user_id):
         
         if 'is_admin' in data:
             user.is_admin = data['is_admin']
+        
+        # Personal
+        for key in ['age','gender','nationality','address','pan','aadhaar','phone_number']:
+            if key in data:
+                setattr(user, key, data[key])
+        if 'salary_slips' in data and isinstance(data['salary_slips'], list):
+            user.salary_slips = data['salary_slips']
+        # Employment
+        for key in ['employment_type','company','years_of_experience']:
+            if key in data:
+                setattr(user, key, data[key])
+        # Financial
+        for key in ['annual_income','bank_account_details','estimated_existing_loan_amount']:
+            if key in data:
+                setattr(user, key, data[key])
         
         user.save()
         return jsonify(user.to_dict()), 200
